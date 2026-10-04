@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twitch Delay Sync</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img src="../assets/icons/icon-32.png" alt="Logo" class="brand-icon">
+      <span class="brand-title">Twitch Delay Sync</span>
+    </div>
+  </header>
+
+  <main class="app-body">
+    <!-- Live Latency Display Card -->
+    <section class="card monitor-card">
+      <div class="card-header">
+        <span class="card-label">Broadcaster Latency</span>
+        <span id="channelName" class="channel-name">-</span>
+      </div>
+      <div class="latency-display">
+        <span id="latencyValue" class="latency-number">--</span>
+        <span class="latency-unit">sec</span>
+      </div>
+      <div class="metric-row">
+        <div class="metric-item">
+          <span class="metric-key">Buffer</span>
+          <span id="bufferValue" class="metric-val">--</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-key">Playback</span>
+          <span id="playbackRate" class="metric-val">1.0x</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-key">Last Sync</span>
+          <span id="lastSyncTime" class="metric-val">Never</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings Card -->
+    <section class="card settings-card">
+      <div class="setting-item">
+        <div class="setting-info">
+          <label for="autoSyncToggle" class="setting-title">Auto-Sync</label>
+          <span class="setting-desc">Sync live edge when delay exceeds threshold</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="autoSyncToggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-item threshold-item">
+        <div class="setting-info">
+          <label for="maxDelayInput" class="setting-title">Max Allowed Delay</label>
+          <span class="setting-desc">Target ceiling in seconds</span>
+        </div>
+        <div class="input-with-controls">
+          <button type="button" class="btn-step" id="btnDelayMinus" aria-label="Decrease delay">-</button>
+          <input type="number" id="maxDelayInput" min="1.0" max="15.0" step="0.1" value="3.0">
+          <button type="button" class="btn-step" id="btnDelayPlus" aria-label="Increase delay">+</button>
+        </div>
+      </div>
+
+      <!-- Quick Presets -->
+      <div class="presets-row" id="delayPresets">
+        <button type="button" class="preset-btn" data-delay="1.5">1.5s</button>
+        <button type="button" class="preset-btn" data-delay="2.0">2.0s</button>
+        <button type="button" class="preset-btn" data-delay="2.5">2.5s</button>
+        <button type="button" class="preset-btn" data-delay="3.0">3.0s</button>
+        <button type="button" class="preset-btn" data-delay="4.0">4.0s</button>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <label for="adaptiveSpeedToggle" class="setting-title">Adaptive Catch-up</label>
+          <span class="setting-desc">Gently speed up (1.1x) before hard sync</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="adaptiveSpeedToggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-item" id="reloadThresholdContainer">
+        <div class="setting-info">
+          <label for="reloadThresholdInput" class="setting-title">Hard Resync Threshold</label>
+          <span class="setting-desc">Resync if latency exceeds (sec)</span>
+        </div>
+        <div class="input-with-controls">
+          <button type="button" class="btn-step" id="btnReloadMinus" aria-label="Decrease resync threshold">-</button>
+          <input type="number" id="reloadThresholdInput" min="2.0" max="30.0" step="0.5" value="5.0">
+          <button type="button" class="btn-step" id="btnReloadPlus" aria-label="Increase resync threshold">+</button>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <label for="cooldownInput" class="setting-title">Cooldown Period</label>
+          <span class="setting-desc">Protection pause between auto-syncs</span>
+        </div>
+        <div class="input-unit-wrapper">
+          <input type="number" id="cooldownInput" min="5" max="60" step="1" value="10">
+          <span class="input-unit">s</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Action Section -->
+    <div class="action-section">
+      <button type="button" id="btnSyncNow" class="btn-primary">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+        </svg>
+        <span>Sync Now</span>
+      </button>
+      <div id="statusNotice" class="status-notice"></div>
+    </div>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
