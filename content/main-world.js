@@ -21,6 +21,8 @@
     cooldown: 10,
     autoCatchupSpeed: true,
     desiredPlaybackRate: 1.0,
+    currentActualRate: 1.0,
+    autoCatchupActive: false,
     catchupStartTime: 0,
     lastSyncTimestamp: 0,
     isSyncing: false,
@@ -30,7 +32,9 @@
     isLive: false,
     channel: '',
     cachedPlayer: null,
-    attachedVideo: null
+    attachedVideo: null,
+    nativeSetPlaybackRate: null,
+    nativeGetPlaybackRate: null
   };
 
   /**
@@ -349,27 +353,118 @@
     };
   }
 
+  const originalPlaybackRateDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'playbackRate');
+  let rampTimer = null;
+
   /**
-   * Bind event listeners to video element to enforce target playback rate
-   * and prevent Twitch's internal player tick from resetting it back to 1.0.
+   * Smoothly transitions playback rate in micro-steps (+/- 0.01 per 100ms)
+   * to eliminate audio phase discontinuities and WSOLA time-stretch popping.
+   */
+  function setPlaybackRateSmooth(targetRate) {
+    targetRate = Math.round(targetRate * 100) / 100;
+    state.desiredPlaybackRate = targetRate;
+
+    if (targetRate > 1.0) {
+      state.autoCatchupActive = true;
+    }
+
+    if (Math.abs(state.currentActualRate - targetRate) < 0.005) {
+      return;
+    }
+
+    if (rampTimer) {
+      clearInterval(rampTimer);
+      rampTimer = null;
+    }
+
+    const stepInterval = 100; // ms
+    const stepDelta = 0.01;
+
+    rampTimer = setInterval(() => {
+      const video = getMainVideo();
+      if (!video) {
+        clearInterval(rampTimer);
+        rampTimer = null;
+        return;
+      }
+
+      if (state.currentActualRate < targetRate) {
+        state.currentActualRate = Math.min(targetRate, Math.round((state.currentActualRate + stepDelta) * 100) / 100);
+      } else if (state.currentActualRate > targetRate) {
+        state.currentActualRate = Math.max(targetRate, Math.round((state.currentActualRate - stepDelta) * 100) / 100);
+      }
+
+      video.preservesPitch = true;
+      if (state.nativeSetPlaybackRate) {
+        state.nativeSetPlaybackRate(state.currentActualRate);
+      } else {
+        video.playbackRate = state.currentActualRate;
+      }
+
+      if (Math.abs(state.currentActualRate - targetRate) < 0.005) {
+        clearInterval(rampTimer);
+        rampTimer = null;
+        if (targetRate === 1.0) {
+          state.autoCatchupActive = false;
+        }
+      }
+    }, stepInterval);
+  }
+
+  /**
+   * Intercept video playbackRate property to prevent Twitch's internal tick loop
+   * from resetting playbackRate back to 1.0, eliminating rapid rate toggling (audio popping).
+   */
+  function interceptVideoPlaybackRate(video) {
+    if (!video || video.__playbackRateIntercepted__) return;
+    video.__playbackRateIntercepted__ = true;
+
+    const nativeGet = originalPlaybackRateDesc ? originalPlaybackRateDesc.get.bind(video) : () => video.playbackRate;
+    const nativeSet = originalPlaybackRateDesc ? originalPlaybackRateDesc.set.bind(video) : (v) => { video.playbackRate = v; };
+
+    state.nativeGetPlaybackRate = nativeGet;
+    state.nativeSetPlaybackRate = nativeSet;
+
+    try {
+      Object.defineProperty(video, 'playbackRate', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          // If extension catch-up is active, report 1.0 to Twitch player queries
+          // so Twitch's internal player watchdog never detects a discrepancy
+          if (state.autoCatchupActive) {
+            return 1.0;
+          }
+          return nativeGet();
+        },
+        set(val) {
+          // If Twitch internal watchdog attempts to force 1.0 during active catch-up,
+          // ignore the reset to eliminate rapid rate toggling
+          if (state.autoCatchupActive && val === 1.0) {
+            return;
+          }
+          state.desiredPlaybackRate = val;
+          nativeSet(val);
+        }
+      });
+    } catch (e) {
+      // Suppress defineProperty errors if any
+    }
+  }
+
+  /**
+   * Attach video element and initialize anti-thrashing interceptor.
    */
   function attachVideoListeners(video) {
     if (!video || state.attachedVideo === video) return;
     state.attachedVideo = video;
+    interceptVideoPlaybackRate(video);
 
-    const enforceRate = () => {
-      if (state.isSyncing) return;
-      if (state.desiredPlaybackRate !== 1.0 && Math.abs(video.playbackRate - state.desiredPlaybackRate) > 0.01) {
-        video.preservesPitch = true;
-        video.playbackRate = state.desiredPlaybackRate;
-      } else if (state.desiredPlaybackRate === 1.0 && video.playbackRate !== 1.0 && !state.isSyncing) {
-        video.playbackRate = 1.0;
+    video.addEventListener('pause', () => {
+      if (state.autoCatchupActive) {
+        setPlaybackRateSmooth(1.0);
       }
-    };
-
-    video.addEventListener('ratechange', enforceRate);
-    video.addEventListener('timeupdate', enforceRate);
-    video.addEventListener('play', enforceRate);
+    });
   }
 
   /**
@@ -384,11 +479,24 @@
       return false;
     }
 
+    if (rampTimer) {
+      clearInterval(rampTimer);
+      rampTimer = null;
+    }
+
     state.isSyncing = true;
     state.lastSyncTimestamp = Date.now();
     state.highLatencyStreak = 0;
     state.catchupStartTime = 0;
     state.desiredPlaybackRate = 1.0;
+    state.currentActualRate = 1.0;
+    state.autoCatchupActive = false;
+
+    if (state.nativeSetPlaybackRate) {
+      state.nativeSetPlaybackRate(1.0);
+    } else {
+      video.playbackRate = 1.0;
+    }
 
     try {
       // 1. Direct micro-pause on HTML5 video element
@@ -415,7 +523,12 @@
             }
           }
 
-          video.playbackRate = 1.0;
+          video.preservesPitch = true;
+          if (state.nativeSetPlaybackRate) {
+            state.nativeSetPlaybackRate(1.0);
+          } else {
+            video.playbackRate = 1.0;
+          }
           const playPromise = video.play();
           if (playPromise !== undefined) {
             playPromise.catch(() => {});
@@ -437,38 +550,34 @@
   }
 
   /**
-   * Adaptive playback rate management to catch up smoothly without video pauses.
-   * Accelerates playback rate dynamically to 1.10x - 1.14x until delay drops to target.
+   * Adaptive playback rate management to catch up smoothly without audio popping.
+   * Accelerates playback rate gradually to 1.05x - 1.08x until delay drops to target.
    */
   function handleAdaptiveSpeed(video, latency) {
     if (!video || !state.autoCatchupSpeed || !state.isLive || video.paused || state.isSyncing) {
-      if (state.desiredPlaybackRate !== 1.0) {
-        state.desiredPlaybackRate = 1.0;
-        if (video) video.playbackRate = 1.0;
+      if (state.currentActualRate !== 1.0) {
+        setPlaybackRateSmooth(1.0);
       }
       return;
     }
 
     const threshold = state.maxDelay || 3.0;
 
-    // 1. Latency is within target delay: restore normal 1.00x playback speed
+    // 1. Latency is within target delay: smoothly restore normal 1.00x playback speed
     if (latency <= threshold) {
-      if (state.desiredPlaybackRate !== 1.0) {
-        state.desiredPlaybackRate = 1.0;
-        video.playbackRate = 1.0;
+      if (state.currentActualRate !== 1.0) {
+        setPlaybackRateSmooth(1.0);
       }
       state.catchupStartTime = 0;
       return;
     }
 
-    // 2. Latency is above target delay: dynamically scale acceleration
+    // 2. Latency is above target delay: smoothly ramp to gentle catch-up ceiling (1.05x - 1.08x)
     const diff = latency - threshold;
-    const targetSpeed = diff > 0.8 ? 1.14 : 1.10;
+    const targetSpeed = diff > 0.8 ? 1.08 : 1.05;
 
-    if (Math.abs(state.desiredPlaybackRate - targetSpeed) > 0.01) {
-      state.desiredPlaybackRate = targetSpeed;
-      video.preservesPitch = true;
-      video.playbackRate = targetSpeed;
+    if (Math.abs(state.desiredPlaybackRate - targetSpeed) > 0.005) {
+      setPlaybackRateSmooth(targetSpeed);
     }
 
     if (!state.catchupStartTime) {
@@ -491,9 +600,8 @@
     // Auto-sync requires enabled flag, active live stream, and valid latency measurement
     if (!state.enabled || !metrics || !metrics.isLive || typeof metrics.latency !== 'number' || metrics.latency <= 0) {
       state.highLatencyStreak = 0;
-      if (state.desiredPlaybackRate !== 1.0) {
-        state.desiredPlaybackRate = 1.0;
-        if (video) video.playbackRate = 1.0;
+      if (state.currentActualRate !== 1.0) {
+        setPlaybackRateSmooth(1.0);
       }
       return;
     }
@@ -501,6 +609,9 @@
     // Do not auto-sync if user explicitly paused the video
     if (video && video.paused) {
       state.highLatencyStreak = 0;
+      if (state.currentActualRate !== 1.0) {
+        setPlaybackRateSmooth(1.0);
+      }
       return;
     }
 
@@ -514,9 +625,8 @@
     if (latency <= threshold) {
       state.highLatencyStreak = 0;
       state.catchupStartTime = 0;
-      if (state.desiredPlaybackRate !== 1.0) {
-        state.desiredPlaybackRate = 1.0;
-        if (video) video.playbackRate = 1.0;
+      if (state.currentActualRate !== 1.0) {
+        setPlaybackRateSmooth(1.0);
       }
       return;
     }
@@ -528,9 +638,8 @@
     if (state.autoCatchupSpeed) {
       // Check if latency has reached or exceeded the reload / hard resync threshold
       if (latency >= reloadThreshold) {
-        if (state.desiredPlaybackRate !== 1.0) {
-          state.desiredPlaybackRate = 1.0;
-          if (video) video.playbackRate = 1.0;
+        if (state.currentActualRate !== 1.0) {
+          setPlaybackRateSmooth(1.0);
         }
 
         if (cooldownElapsed && !state.isSyncing) {
@@ -545,9 +654,9 @@
       // Latency is within catch-up zone (threshold < latency < reloadThreshold)
       handleAdaptiveSpeed(video, latency);
 
-      // Only trigger hard sync if speed catch-up is unable to resolve drift after 14 seconds
+      // Only trigger hard sync if speed catch-up is unable to resolve drift after 18 seconds
       const catchupDuration = state.catchupStartTime ? (now - state.catchupStartTime) : 0;
-      const speedStruggling = catchupDuration > 14000;
+      const speedStruggling = catchupDuration > 18000;
 
       if (speedStruggling && cooldownElapsed && !state.isSyncing) {
         state.highLatencyStreak++;
@@ -557,9 +666,8 @@
       }
     } else {
       // Adaptive speed is disabled by user: direct hard sync trigger
-      if (state.desiredPlaybackRate !== 1.0) {
-        state.desiredPlaybackRate = 1.0;
-        if (video) video.playbackRate = 1.0;
+      if (state.currentActualRate !== 1.0) {
+        setPlaybackRateSmooth(1.0);
       }
 
       if (cooldownElapsed && !state.isSyncing) {
@@ -586,7 +694,7 @@
           channel: state.channel,
           isSyncing: state.isSyncing,
           lastSyncTimestamp: state.lastSyncTimestamp,
-          playbackRate: getMainVideo()?.playbackRate || 1.0
+          playbackRate: state.currentActualRate || 1.0
         }
       },
       '*'
@@ -619,10 +727,8 @@
           }
           if (typeof payload.autoCatchupSpeed === 'boolean') {
             state.autoCatchupSpeed = payload.autoCatchupSpeed;
-            if (!state.autoCatchupSpeed && state.desiredPlaybackRate !== 1.0) {
-              state.desiredPlaybackRate = 1.0;
-              const video = getMainVideo();
-              if (video) video.playbackRate = 1.0;
+            if (!state.autoCatchupSpeed && state.currentActualRate !== 1.0) {
+              setPlaybackRateSmooth(1.0);
             }
           }
         }

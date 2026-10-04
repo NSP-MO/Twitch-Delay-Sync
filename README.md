@@ -37,7 +37,7 @@ Manifest V3 enforces strict execution context isolation between extension APIs a
 
 - **Micro Pause-and-Play Synchronization**: Synchronizes playback to the live edge with zero loading spinners or buffering delays, maintaining uninterrupted audio/video flow and persistent chat connection.
 - **Configurable Max Delay Threshold**: Set maximum permitted delay (e.g., 2.0s, 2.5s, 3.0s) with step increments and one-click presets.
-- **Adaptive Speed Catch-up**: Proactively accelerates playback to 1.1x when slight latency drift is detected, smoothly eliminating minor lag before hard resync is required.
+- **Adaptive Speed Catch-up**: Proactively accelerates playback using micro-stepped gradual ramping (1.05x–1.08x) with property-level anti-thrashing interception to eliminate audio popping during catch-up transitions.
 - **Hard Resync Threshold**: User-defined latency limit (default 5.0s) that switches operation from gradual speed catch-up to immediate live edge resync when stream lag is substantial.
 - **Cooldown Protection**: Enforces a configurable pause interval (default 10s) following each sync action to prevent cyclic resets during network buffer stabilization.
 - **Zero Content Security Policy Violations**: Complies strictly with Chromium Manifest V3 security requirements (zero inline handlers, zero `eval` or dynamic code constructors).
@@ -63,7 +63,7 @@ Manifest V3 enforces strict execution context isolation between extension APIs a
 | :--- | :--- | :--- | :--- |
 | `Auto-Sync` | Boolean | `Enabled` | Automatically initiates live edge synchronization when measured latency exceeds the maximum delay threshold. |
 | `Max Allowed Delay` | Float (seconds) | `3.0s` | Maximum permitted latency to broadcaster before synchronization triggers. |
-| `Adaptive Catch-up` | Boolean | `Enabled` | Gently accelerates playback rate to 1.1x when latency begins drifting, returning to 1.0x once aligned. |
+| `Adaptive Catch-up` | Boolean | `Enabled` | Smoothly ramps playback rate in subtle micro-steps (1.05x–1.08x) when latency drifts, returning smoothly to 1.0x without audio pops. |
 | `Hard Resync Threshold` | Float (seconds) | `5.0s` | Latency limit where gentle playback catch-up is bypassed in favor of immediate live resync. |
 | `Cooldown Period` | Integer (seconds) | `10s` | Minimum pause duration between automated synchronization events to permit buffer stabilization. |
 
