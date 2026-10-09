@@ -19,7 +19,7 @@
     maxDelay: 3.0,
     reloadThreshold: 5.0,
     cooldown: 10,
-    autoCatchupSpeed: false,
+    autoCatchupSpeed: true,
     desiredPlaybackRate: 1.0,
     currentActualRate: 1.0,
     autoCatchupActive: false,

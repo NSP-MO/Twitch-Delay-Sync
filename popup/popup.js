@@ -32,7 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
     maxDelay: 3.0,
     reloadThreshold: 5.0,
     cooldown: 10,
-    autoCatchupSpeed: false
+    autoCatchupSpeed: true
   };
 
 
