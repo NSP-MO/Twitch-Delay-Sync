@@ -19,7 +19,7 @@
     maxDelay: 3.0,
     reloadThreshold: 5.0,
     cooldown: 10,
-    autoCatchupSpeed: true,
+    autoCatchupSpeed: false,
     desiredPlaybackRate: 1.0,
     currentActualRate: 1.0,
     autoCatchupActive: false,
@@ -502,7 +502,13 @@
       // 1. Direct micro-pause on HTML5 video element
       video.pause();
 
-      // 2. Trigger Twitch native live button if present
+      // 2. Trigger native Twitch player live edge seek to pull freshest manifest segments
+      const player = findTwitchPlayer();
+      if (player && typeof player.seekToLive === 'function') {
+        try { player.seekToLive(); } catch (e) {}
+      }
+
+      // 3. Trigger Twitch native live button if present
       const liveBtn = document.querySelector(
         '[data-a-target="player-live-button"], [aria-label="Click to go live"], button[data-a-target="player-live-indicator"]'
       );
@@ -510,16 +516,18 @@
         try { liveBtn.click(); } catch (e) {}
       }
 
-      // 3. Resume playback after 25ms
+      // 4. Resume playback after 25ms with safe buffer headroom
       setTimeout(() => {
         try {
           // Safe buffer alignment: Only align within buffered range
           if (video.buffered && video.buffered.length > 0) {
             const bufEnd = video.buffered.end(video.buffered.length - 1);
             const bufferLag = bufEnd - video.currentTime;
-            // If lagging more than 1.2s behind downloaded buffer, jump forward but keep 0.4s cushion
-            if (bufferLag > 1.2 && bufferLag < 60) {
-              video.currentTime = Math.max(0, bufEnd - 0.4);
+            // Dynamically scale buffer cushion based on target max delay
+            const targetDelay = state.maxDelay || 3.0;
+            const cushion = Math.min(0.5, Math.max(0.15, targetDelay * 0.35));
+            if (bufferLag > (cushion + 0.15) && bufferLag < 60) {
+              video.currentTime = Math.max(0, bufEnd - cushion);
             }
           }
 
@@ -552,9 +560,19 @@
   /**
    * Adaptive playback rate management to catch up smoothly without audio popping.
    * Accelerates playback rate gradually to 1.05x - 1.08x until delay drops to target.
+   * Includes buffer starvation protection to avoid sudden buffering spinners.
    */
   function handleAdaptiveSpeed(video, latency) {
     if (!video || !state.autoCatchupSpeed || !state.isLive || video.paused || state.isSyncing) {
+      if (state.currentActualRate !== 1.0) {
+        setPlaybackRateSmooth(1.0);
+      }
+      return;
+    }
+
+    // Dynamic Buffer Protection Guard: If forward buffer is depleted, do not accelerate
+    const minBufferGuard = Math.min(1.2, Math.max(0.35, (state.maxDelay || 3.0) * 0.5));
+    if (state.currentBuffer !== null && state.currentBuffer < minBufferGuard) {
       if (state.currentActualRate !== 1.0) {
         setPlaybackRateSmooth(1.0);
       }
@@ -715,11 +733,11 @@
           if (typeof payload.enabled === 'boolean') state.enabled = payload.enabled;
           if (payload.maxDelay !== undefined) {
             const m = parseFloat(payload.maxDelay);
-            if (!isNaN(m) && m > 0) state.maxDelay = m;
+            if (!isNaN(m) && m > 0) state.maxDelay = Math.max(0.5, Math.round(m * 10) / 10);
           }
           if (payload.reloadThreshold !== undefined) {
             const r = parseFloat(payload.reloadThreshold);
-            if (!isNaN(r) && r > 0) state.reloadThreshold = r;
+            if (!isNaN(r) && r > 0) state.reloadThreshold = Math.max(0.8, Math.round(r * 10) / 10);
           }
           if (payload.cooldown !== undefined) {
             const c = parseInt(payload.cooldown, 10);

@@ -21,7 +21,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnReloadPlus = document.getElementById('btnReloadPlus');
   const cooldownInput = document.getElementById('cooldownInput');
   const btnSyncNow = document.getElementById('btnSyncNow');
-  const statusNotice = document.getElementById('statusNotice');
 
   let activeTabId = null;
   let isTwitchTab = false;
@@ -33,20 +32,10 @@ document.addEventListener('DOMContentLoaded', () => {
     maxDelay: 3.0,
     reloadThreshold: 5.0,
     cooldown: 10,
-    autoCatchupSpeed: true
+    autoCatchupSpeed: false
   };
 
-  /**
-   * Temporary feedback notice.
-   */
-  let noticeTimeout = null;
-  function showNotice(text) {
-    if (noticeTimeout) clearTimeout(noticeTimeout);
-    statusNotice.textContent = text;
-    noticeTimeout = setTimeout(() => {
-      statusNotice.textContent = '';
-    }, 2500);
-  }
+
 
   /**
    * Format relative timestamp.
@@ -111,58 +100,73 @@ document.addEventListener('DOMContentLoaded', () => {
    */
   function renderTelemetry(telemetry) {
     if (!telemetry) {
-      channelName.textContent = 'Connecting...';
+      if (channelName) channelName.textContent = 'Connecting...';
       return;
     }
 
-    channelName.textContent = telemetry.channel ? telemetry.channel : 'Twitch Stream';
+    if (channelName) {
+      channelName.textContent = telemetry.channel ? telemetry.channel : 'Twitch Stream';
+    }
 
     if (!telemetry.isLive) {
-      latencyValue.textContent = '--';
-      latencyValue.className = 'latency-number';
-      bufferValue.textContent = '--';
-      playbackRate.textContent = '1.0x';
-      lastSyncTime.textContent = telemetry.lastSyncTimestamp ? formatRelativeTime(telemetry.lastSyncTimestamp) : 'Never';
-      btnSyncNow.disabled = false;
+      if (latencyValue) {
+        latencyValue.textContent = '--';
+        latencyValue.className = 'latency-number';
+      }
+      if (bufferValue) bufferValue.textContent = '--';
+      if (playbackRate) playbackRate.textContent = '1.0x';
+      if (lastSyncTime) {
+        lastSyncTime.textContent = telemetry.lastSyncTimestamp ? formatRelativeTime(telemetry.lastSyncTimestamp) : 'Never';
+      }
+      if (btnSyncNow) btnSyncNow.disabled = false;
       return;
     }
 
     if (typeof telemetry.latency === 'number' && telemetry.latency >= 0) {
       const latVal = telemetry.latency;
-      latencyValue.textContent = latVal.toFixed(2);
-
-      const maxLimit = currentSettings.maxDelay || 3.0;
-      if (latVal > maxLimit) {
-        latencyValue.className = 'latency-number latency-alert';
-      } else {
-        latencyValue.className = 'latency-number latency-normal';
+      if (latencyValue) {
+        latencyValue.textContent = latVal.toFixed(2);
+        const maxLimit = currentSettings.maxDelay || 3.0;
+        if (latVal > maxLimit) {
+          latencyValue.className = 'latency-number latency-alert';
+        } else {
+          latencyValue.className = 'latency-number latency-normal';
+        }
       }
     } else {
-      latencyValue.textContent = '--';
-      latencyValue.className = 'latency-number';
+      if (latencyValue) {
+        latencyValue.textContent = '--';
+        latencyValue.className = 'latency-number';
+      }
     }
 
-    if (typeof telemetry.buffer === 'number') {
-      bufferValue.textContent = `${telemetry.buffer.toFixed(1)}s`;
-    } else {
-      bufferValue.textContent = '--';
-    }
-
-    if (typeof telemetry.playbackRate === 'number') {
-      const rate = telemetry.playbackRate;
-      playbackRate.textContent = `${rate.toFixed(2)}x`;
-      if (rate > 1.02) {
-        playbackRate.style.color = '#38bdf8';
+    if (bufferValue) {
+      if (typeof telemetry.buffer === 'number') {
+        bufferValue.textContent = `${telemetry.buffer.toFixed(1)}s`;
       } else {
+        bufferValue.textContent = '--';
+      }
+    }
+
+    if (playbackRate) {
+      if (typeof telemetry.playbackRate === 'number') {
+        const rate = telemetry.playbackRate;
+        playbackRate.textContent = `${rate.toFixed(2)}x`;
+        if (rate > 1.02) {
+          playbackRate.style.color = '#38bdf8';
+        } else {
+          playbackRate.style.color = '';
+        }
+      } else {
+        playbackRate.textContent = '1.00x';
         playbackRate.style.color = '';
       }
-    } else {
-      playbackRate.textContent = '1.00x';
-      playbackRate.style.color = '';
     }
 
-    lastSyncTime.textContent = formatRelativeTime(telemetry.lastSyncTimestamp);
-    btnSyncNow.disabled = false;
+    if (lastSyncTime) {
+      lastSyncTime.textContent = formatRelativeTime(telemetry.lastSyncTimestamp);
+    }
+    if (btnSyncNow) btnSyncNow.disabled = false;
   }
 
   /**
@@ -193,7 +197,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Auto-sync switch
     autoSyncToggle.addEventListener('change', (e) => {
       persistSettings({ enabled: e.target.checked });
-      showNotice(e.target.checked ? 'Auto-Sync enabled' : 'Auto-Sync disabled');
     });
 
     // Adaptive speed switch
@@ -213,33 +216,33 @@ document.addEventListener('DOMContentLoaded', () => {
     // Max delay input
     maxDelayInput.addEventListener('change', (e) => {
       let val = parseFloat(e.target.value);
-      if (isNaN(val) || val < 1.0) val = 1.0;
+      if (isNaN(val) || val < 0.5) val = 0.5;
       if (val > 15.0) val = 15.0;
       val = Math.round(val * 10) / 10;
       e.target.value = val.toFixed(1);
       const updates = { maxDelay: val };
       if (val >= (currentSettings.reloadThreshold || 5.0)) {
-        updates.reloadThreshold = Math.round((val + 0.5) * 10) / 10;
+        updates.reloadThreshold = Math.round((val + 0.3) * 10) / 10;
       }
       persistSettings(updates);
     });
 
-    // Minus button
+    // Minus button (steps by 0.1, min 0.5)
     btnDelayMinus.addEventListener('click', () => {
       let val = parseFloat(maxDelayInput.value) || 3.0;
-      val = Math.max(1.0, Math.round((val - 0.5) * 10) / 10);
+      val = Math.max(0.5, Math.round((val - 0.1) * 10) / 10);
       maxDelayInput.value = val.toFixed(1);
       persistSettings({ maxDelay: val });
     });
 
-    // Plus button
+    // Plus button (steps by 0.1)
     btnDelayPlus.addEventListener('click', () => {
       let val = parseFloat(maxDelayInput.value) || 3.0;
-      val = Math.min(15.0, Math.round((val + 0.5) * 10) / 10);
+      val = Math.min(15.0, Math.round((val + 0.1) * 10) / 10);
       maxDelayInput.value = val.toFixed(1);
       const updates = { maxDelay: val };
       if (val >= (currentSettings.reloadThreshold || 5.0)) {
-        updates.reloadThreshold = Math.round((val + 0.5) * 10) / 10;
+        updates.reloadThreshold = Math.round((val + 0.3) * 10) / 10;
       }
       persistSettings(updates);
     });
@@ -252,7 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
           maxDelayInput.value = val.toFixed(1);
           const updates = { maxDelay: val };
           if (val >= (currentSettings.reloadThreshold || 5.0)) {
-            updates.reloadThreshold = Math.round((val + 0.5) * 10) / 10;
+            updates.reloadThreshold = Math.round((val + 0.3) * 10) / 10;
           }
           persistSettings(updates);
         }
@@ -263,7 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (reloadThresholdInput) {
       reloadThresholdInput.addEventListener('change', (e) => {
         let val = parseFloat(e.target.value);
-        const minVal = Math.max(2.0, Math.round(((currentSettings.maxDelay || 3.0) + 0.5) * 10) / 10);
+        const minVal = Math.max(0.8, Math.round(((currentSettings.maxDelay || 3.0) + 0.1) * 10) / 10);
         if (isNaN(val) || val < minVal) val = minVal;
         if (val > 30.0) val = 30.0;
         val = Math.round(val * 10) / 10;
@@ -272,22 +275,22 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // Reload minus button
+    // Reload minus button (steps by 0.1)
     if (btnReloadMinus) {
       btnReloadMinus.addEventListener('click', () => {
         let val = parseFloat(reloadThresholdInput.value) || 5.0;
-        const minVal = Math.max(2.0, Math.round(((currentSettings.maxDelay || 3.0) + 0.5) * 10) / 10);
-        val = Math.max(minVal, Math.round((val - 0.5) * 10) / 10);
+        const minVal = Math.max(0.8, Math.round(((currentSettings.maxDelay || 3.0) + 0.1) * 10) / 10);
+        val = Math.max(minVal, Math.round((val - 0.1) * 10) / 10);
         reloadThresholdInput.value = val.toFixed(1);
         persistSettings({ reloadThreshold: val });
       });
     }
 
-    // Reload plus button
+    // Reload plus button (steps by 0.1)
     if (btnReloadPlus) {
       btnReloadPlus.addEventListener('click', () => {
         let val = parseFloat(reloadThresholdInput.value) || 5.0;
-        val = Math.min(30.0, Math.round((val + 0.5) * 10) / 10);
+        val = Math.min(30.0, Math.round((val + 0.1) * 10) / 10);
         reloadThresholdInput.value = val.toFixed(1);
         persistSettings({ reloadThreshold: val });
       });
@@ -298,7 +301,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!activeTabId) return;
 
       if (needsTabReload) {
-        showNotice('Reloading tab...');
         chrome.tabs.reload(activeTabId);
         window.close();
         return;
@@ -308,16 +310,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const icon = btnSyncNow.querySelector('.btn-icon');
       if (icon) icon.classList.add('spinning');
 
-      chrome.tabs.sendMessage(activeTabId, { type: 'SYNC_NOW' }, (res) => {
+      chrome.tabs.sendMessage(activeTabId, { type: 'SYNC_NOW' }, () => {
         setTimeout(() => {
           btnSyncNow.disabled = false;
           if (icon) icon.classList.remove('spinning');
-          if (chrome.runtime.lastError || !res?.success) {
-            showNotice('Failed to sync stream');
-          } else {
-            showNotice('Synchronized to live edge');
-            queryActiveTab();
-          }
+          queryActiveTab();
         }, 500);
       });
     });
@@ -346,15 +343,16 @@ document.addEventListener('DOMContentLoaded', () => {
           // Tab is on Twitch, but content script port is not yet active (tab open before extension install/reload)
           isTwitchTab = true;
           needsTabReload = true;
-          channelName.textContent = 'Refresh Twitch page (F5)';
-          showNotice('Press F5 on Twitch to connect');
-          btnSyncNow.disabled = false;
-          const syncSpan = btnSyncNow.querySelector('span');
-          if (syncSpan) syncSpan.textContent = 'Reload Twitch Tab';
+          if (channelName) channelName.textContent = 'Refresh Twitch page (F5)';
+          if (btnSyncNow) {
+            btnSyncNow.disabled = false;
+            const syncSpan = btnSyncNow.querySelector('span');
+            if (syncSpan) syncSpan.textContent = 'Reload Twitch Tab';
+          }
         } else {
           isTwitchTab = false;
-          channelName.textContent = 'Open twitch.tv';
-          btnSyncNow.disabled = true;
+          if (channelName) channelName.textContent = 'Open twitch.tv';
+          if (btnSyncNow) btnSyncNow.disabled = true;
         }
         return;
       }

@@ -35,9 +35,9 @@ Manifest V3 enforces strict execution context isolation between extension APIs a
 
 ## Key Features
 
-- **Micro Pause-and-Play Synchronization**: Synchronizes playback to the live edge with zero loading spinners or buffering delays, maintaining uninterrupted audio/video flow and persistent chat connection.
+- **Micro Pause-and-Play Synchronization (Primary)**: The primary synchronization engine that instantly aligns playback to the freshest live edge while preserving a 0.5s buffer cushion and constant 1.00x playback speed. Eliminates buffer depletion, loading spinners, and audio pitch artifacts without stream reload.
 - **Configurable Max Delay Threshold**: Set maximum permitted delay (e.g., 2.0s, 2.5s, 3.0s) with step increments and one-click presets.
-- **Adaptive Speed Catch-up**: Proactively accelerates playback using micro-stepped gradual ramping (1.05x–1.08x) with property-level anti-thrashing interception to eliminate audio popping during catch-up transitions.
+- **Adaptive Speed Catch-up (Optional)**: Optional speed acceleration (1.05x–1.08x) with property-level anti-thrashing interception to eliminate audio popping. Includes an automated buffer starvation guard that drops playback to 1.00x whenever forward buffer drops below 1.2s.
 - **Hard Resync Threshold**: User-defined latency limit (default 5.0s) that switches operation from gradual speed catch-up to immediate live edge resync when stream lag is substantial.
 - **Cooldown Protection**: Enforces a configurable pause interval (default 10s) following each sync action to prevent cyclic resets during network buffer stabilization.
 - **Zero Content Security Policy Violations**: Complies strictly with Chromium Manifest V3 security requirements (zero inline handlers, zero `eval` or dynamic code constructors).
@@ -61,10 +61,10 @@ Manifest V3 enforces strict execution context isolation between extension APIs a
 
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `Auto-Sync` | Boolean | `Enabled` | Automatically initiates live edge synchronization when measured latency exceeds the maximum delay threshold. |
-| `Max Allowed Delay` | Float (seconds) | `3.0s` | Maximum permitted latency to broadcaster before synchronization triggers. |
-| `Adaptive Catch-up` | Boolean | `Enabled` | Smoothly ramps playback rate in subtle micro-steps (1.05x–1.08x) when latency drifts, returning smoothly to 1.0x without audio pops. |
-| `Hard Resync Threshold` | Float (seconds) | `5.0s` | Latency limit where gentle playback catch-up is bypassed in favor of immediate live resync. |
+| `Auto-Sync` | Boolean | `Enabled` | Automatically initiates live edge synchronization via micro Pause-and-Continue when measured latency exceeds the maximum delay threshold. |
+| `Max Allowed Delay` | Float (seconds) | `3.0s` | Maximum permitted latency to broadcaster before synchronization triggers (configurable in 0.1s increments down to 0.5s minimum). |
+| `Adaptive Catch-up` | Boolean | `Disabled` | Optional playback speed acceleration (1.05x–1.08x) for subtle latency catch-up. Features dynamic buffer starvation guard. |
+| `Hard Resync Threshold` | Float (seconds) | `5.0s` | Latency limit where gentle playback catch-up (if enabled) is bypassed in favor of immediate live resync (configurable in 0.1s increments). |
 | `Cooldown Period` | Integer (seconds) | `10s` | Minimum pause duration between automated synchronization events to permit buffer stabilization. |
 
 ---
