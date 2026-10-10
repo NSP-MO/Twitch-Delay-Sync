@@ -16,6 +16,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnDelayPlus = document.getElementById('btnDelayPlus');
   const delayPresets = document.querySelectorAll('.preset-btn');
   const adaptiveSpeedToggle = document.getElementById('adaptiveSpeedToggle');
+  const hardSyncToggle = document.getElementById('hardSyncToggle');
+  const reloadThresholdContainer = document.getElementById('reloadThresholdContainer');
   const reloadThresholdInput = document.getElementById('reloadThresholdInput');
   const btnReloadMinus = document.getElementById('btnReloadMinus');
   const btnReloadPlus = document.getElementById('btnReloadPlus');
@@ -32,7 +34,8 @@ document.addEventListener('DOMContentLoaded', () => {
     maxDelay: 3.0,
     reloadThreshold: 5.0,
     cooldown: 10,
-    autoCatchupSpeed: true
+    autoCatchupSpeed: true,
+    hardSync: true
   };
 
 
@@ -71,9 +74,23 @@ document.addEventListener('DOMContentLoaded', () => {
     currentSettings = { ...currentSettings, ...settings };
     autoSyncToggle.checked = !!currentSettings.enabled;
     maxDelayInput.value = (currentSettings.maxDelay || 3.0).toFixed(1);
+    if (hardSyncToggle) {
+      hardSyncToggle.checked = currentSettings.hardSync !== false;
+    }
+    const isHardSyncOn = currentSettings.hardSync !== false;
+    if (reloadThresholdContainer) {
+      if (isHardSyncOn) {
+        reloadThresholdContainer.classList.remove('disabled');
+      } else {
+        reloadThresholdContainer.classList.add('disabled');
+      }
+    }
     if (reloadThresholdInput) {
       reloadThresholdInput.value = (currentSettings.reloadThreshold || 5.0).toFixed(1);
+      reloadThresholdInput.disabled = !isHardSyncOn;
     }
+    if (btnReloadMinus) btnReloadMinus.disabled = !isHardSyncOn;
+    if (btnReloadPlus) btnReloadPlus.disabled = !isHardSyncOn;
     adaptiveSpeedToggle.checked = !!currentSettings.autoCatchupSpeed;
     cooldownInput.value = currentSettings.cooldown || 10;
     updatePresetButtons(currentSettings.maxDelay);
@@ -204,6 +221,13 @@ document.addEventListener('DOMContentLoaded', () => {
       persistSettings({ autoCatchupSpeed: e.target.checked });
     });
 
+    // Hard Resync switch
+    if (hardSyncToggle) {
+      hardSyncToggle.addEventListener('change', (e) => {
+        persistSettings({ hardSync: e.target.checked });
+      });
+    }
+
     // Cooldown input
     cooldownInput.addEventListener('change', (e) => {
       let val = parseInt(e.target.value, 10);
@@ -321,7 +345,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Initialize
-  chrome.storage.local.get(['enabled', 'maxDelay', 'reloadThreshold', 'cooldown', 'autoCatchupSpeed'], (stored) => {
+  chrome.storage.local.get(['enabled', 'maxDelay', 'reloadThreshold', 'cooldown', 'autoCatchupSpeed', 'hardSync'], (stored) => {
     renderSettings(stored);
   });
 

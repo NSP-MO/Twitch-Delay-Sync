@@ -24,7 +24,8 @@
     maxDelay: 3.0,
     reloadThreshold: 5.0,
     cooldown: 10,
-    autoCatchupSpeed: true
+    autoCatchupSpeed: true,
+    hardSync: true
   };
 
   /**
@@ -59,7 +60,7 @@
    */
   function initializeSettings() {
     chrome.storage.local.get(
-      ['enabled', 'maxDelay', 'reloadThreshold', 'cooldown', 'autoCatchupSpeed'],
+      ['enabled', 'maxDelay', 'reloadThreshold', 'cooldown', 'autoCatchupSpeed', 'hardSync'],
       (stored) => {
         if (stored) {
           if (typeof stored.enabled === 'boolean') currentSettings.enabled = stored.enabled;
@@ -67,6 +68,7 @@
           if (typeof stored.reloadThreshold === 'number') currentSettings.reloadThreshold = stored.reloadThreshold;
           if (typeof stored.cooldown === 'number') currentSettings.cooldown = stored.cooldown;
           if (typeof stored.autoCatchupSpeed === 'boolean') currentSettings.autoCatchupSpeed = stored.autoCatchupSpeed;
+          if (typeof stored.hardSync === 'boolean') currentSettings.hardSync = stored.hardSync;
         }
         dispatchConfigToMainWorld(currentSettings);
       }

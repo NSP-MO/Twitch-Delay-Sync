@@ -186,6 +186,12 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  transition: opacity 0.2s ease;
+}
+
+.setting-item.disabled {
+  opacity: 0.35;
+  pointer-events: none;
 }
 
 .setting-info {

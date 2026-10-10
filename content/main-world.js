@@ -20,6 +20,7 @@
     reloadThreshold: 5.0,
     cooldown: 10,
     autoCatchupSpeed: true,
+    hardSync: true,
     desiredPlaybackRate: 1.0,
     currentActualRate: 1.0,
     autoCatchupActive: false,
@@ -452,8 +453,78 @@
     }
   }
 
+  let stallRecoveryTimer = null;
+  let lastStallRecoveryTimestamp = 0;
+
   /**
-   * Attach video element and initialize anti-thrashing interceptor.
+   * Fast Buffer Unfreeze & Anti-Stall Recovery.
+   * Intercepts HTML5 video 'waiting' and 'stalled' events when delay is set low.
+   * Instead of letting Twitch freeze for 2-3 seconds to accumulate a 3s buffer,
+   * waits 180ms for the newest chunk to land, aligns playback to the buffer edge, and immediately continues.
+   */
+  function handleVideoStall(video) {
+    if (!state.enabled || !state.isLive || video.paused || state.isSyncing) {
+      return;
+    }
+
+    if (stallRecoveryTimer) {
+      clearTimeout(stallRecoveryTimer);
+      stallRecoveryTimer = null;
+    }
+
+    const now = Date.now();
+    // Enforce 2.5s cooldown between stall unfreezes to prevent thrashing if network is disconnected
+    if (now - lastStallRecoveryTimestamp < 2500) {
+      return;
+    }
+
+    stallRecoveryTimer = setTimeout(() => {
+      stallRecoveryTimer = null;
+      if (!state.enabled || !state.isLive || video.paused || state.isSyncing) {
+        return;
+      }
+
+      // Check if video is actually stalled (readyState < 3)
+      if (video.readyState >= 3) {
+        return;
+      }
+
+      lastStallRecoveryTimestamp = Date.now();
+
+      try {
+        // Direct buffer alignment within downloaded chunks
+        if (video.buffered && video.buffered.length > 0) {
+          const bufEnd = video.buffered.end(video.buffered.length - 1);
+          const targetDelay = state.maxDelay || 3.0;
+          const cushion = Math.min(0.35, Math.max(0.10, targetDelay * 0.20));
+          const targetTime = Math.max(0, bufEnd - cushion);
+          if (targetTime > video.currentTime) {
+            video.currentTime = targetTime;
+          }
+        }
+
+        // Micro pause-and-play to kick the decoder pipeline out of waiting state
+        video.pause();
+        setTimeout(() => {
+          video.preservesPitch = true;
+          if (state.nativeSetPlaybackRate) {
+            state.nativeSetPlaybackRate(1.0);
+          } else {
+            video.playbackRate = 1.0;
+          }
+          const playPromise = video.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(() => {});
+          }
+        }, 20);
+      } catch (err) {
+        // Suppress transient stall recovery errors
+      }
+    }, 180);
+  }
+
+  /**
+   * Attach video element and initialize anti-thrashing interceptor and anti-stall listener.
    */
   function attachVideoListeners(video) {
     if (!video || state.attachedVideo === video) return;
@@ -461,8 +532,27 @@
     interceptVideoPlaybackRate(video);
 
     video.addEventListener('pause', () => {
+      if (stallRecoveryTimer) {
+        clearTimeout(stallRecoveryTimer);
+        stallRecoveryTimer = null;
+      }
       if (state.autoCatchupActive) {
         setPlaybackRateSmooth(1.0);
+      }
+    });
+
+    video.addEventListener('waiting', () => {
+      handleVideoStall(video);
+    });
+
+    video.addEventListener('stalled', () => {
+      handleVideoStall(video);
+    });
+
+    video.addEventListener('playing', () => {
+      if (stallRecoveryTimer) {
+        clearTimeout(stallRecoveryTimer);
+        stallRecoveryTimer = null;
       }
     });
   }
@@ -470,6 +560,8 @@
   /**
    * Execute live stream synchronization using direct micro pause-and-play.
    * Cuts presentation lag safely without buffer starvation or HLS loading delay.
+   * Prevents Twitch's native player from jumping back to 3s+ delay by avoiding
+   * native seekToLive() and live button clicks when low delay targets are configured.
    */
   function performLiveSync(reason = 'auto') {
     const video = getMainVideo();
@@ -498,25 +590,32 @@
       video.playbackRate = 1.0;
     }
 
+    const targetDelay = state.maxDelay || 3.0;
+    const isTightTarget = targetDelay < 2.5;
+
     try {
       // 1. Direct micro-pause on HTML5 video element
       video.pause();
 
-      // 2. Trigger native Twitch player live edge seek to pull freshest manifest segments
-      const player = findTwitchPlayer();
-      if (player && typeof player.seekToLive === 'function') {
-        try { player.seekToLive(); } catch (e) {}
+      // 2. Only invoke native Twitch seekToLive if target delay is loose (>= 2.5s)
+      // or if buffered segments are completely unavailable.
+      // Calling native seekToLive on low delay forces Twitch's internal target back to 3s+!
+      const hasBuffer = video.buffered && video.buffered.length > 0;
+      if (!isTightTarget || !hasBuffer) {
+        const player = findTwitchPlayer();
+        if (player && typeof player.seekToLive === 'function') {
+          try { player.seekToLive(); } catch (e) {}
+        }
+
+        const liveBtn = document.querySelector(
+          '[data-a-target="player-live-button"], [aria-label="Click to go live"], button[data-a-target="player-live-indicator"]'
+        );
+        if (liveBtn) {
+          try { liveBtn.click(); } catch (e) {}
+        }
       }
 
-      // 3. Trigger Twitch native live button if present
-      const liveBtn = document.querySelector(
-        '[data-a-target="player-live-button"], [aria-label="Click to go live"], button[data-a-target="player-live-indicator"]'
-      );
-      if (liveBtn) {
-        try { liveBtn.click(); } catch (e) {}
-      }
-
-      // 4. Resume playback after 25ms with safe buffer headroom
+      // 3. Resume playback after 25ms with safe buffer headroom
       setTimeout(() => {
         try {
           // Safe buffer alignment: Only align within buffered range
@@ -524,9 +623,8 @@
             const bufEnd = video.buffered.end(video.buffered.length - 1);
             const bufferLag = bufEnd - video.currentTime;
             // Dynamically scale buffer cushion based on target max delay
-            const targetDelay = state.maxDelay || 3.0;
-            const cushion = Math.min(0.5, Math.max(0.15, targetDelay * 0.35));
-            if (bufferLag > (cushion + 0.15) && bufferLag < 60) {
+            const cushion = Math.min(0.35, Math.max(0.10, targetDelay * 0.20));
+            if (bufferLag > (cushion + 0.10) && bufferLag < 60) {
               video.currentTime = Math.max(0, bufEnd - cushion);
             }
           }
@@ -570,8 +668,9 @@
       return;
     }
 
-    // Dynamic Buffer Protection Guard: If forward buffer is depleted, do not accelerate
-    const minBufferGuard = Math.min(1.2, Math.max(0.35, (state.maxDelay || 3.0) * 0.5));
+    // Dynamic Buffer Protection Guard: Scale guard threshold proportionally to targetDelay
+    const targetDelay = state.maxDelay || 3.0;
+    const minBufferGuard = Math.min(1.0, Math.max(0.12, targetDelay * 0.25));
     if (state.currentBuffer !== null && state.currentBuffer < minBufferGuard) {
       if (state.currentActualRate !== 1.0) {
         setPlaybackRateSmooth(1.0);
@@ -652,10 +751,11 @@
     // 2. Target Exceeded (latency > threshold):
     const diff = latency - threshold;
     const reloadThreshold = state.reloadThreshold || 5.0;
+    const isHardSyncEnabled = state.hardSync !== false;
 
     if (state.autoCatchupSpeed) {
       // Check if latency has reached or exceeded the reload / hard resync threshold
-      if (latency >= reloadThreshold) {
+      if (isHardSyncEnabled && latency >= reloadThreshold) {
         if (state.currentActualRate !== 1.0) {
           setPlaybackRateSmooth(1.0);
         }
@@ -669,21 +769,21 @@
         return;
       }
 
-      // Latency is within catch-up zone (threshold < latency < reloadThreshold)
+      // Latency is within catch-up zone (threshold < latency < reloadThreshold) or hard sync is disabled
       handleAdaptiveSpeed(video, latency);
 
-      // Only trigger hard sync if speed catch-up is unable to resolve drift after 18 seconds
+      // Only trigger hard sync if speed catch-up is unable to resolve drift after 18 seconds AND hard sync is enabled
       const catchupDuration = state.catchupStartTime ? (now - state.catchupStartTime) : 0;
       const speedStruggling = catchupDuration > 18000;
 
-      if (speedStruggling && cooldownElapsed && !state.isSyncing) {
+      if (isHardSyncEnabled && speedStruggling && cooldownElapsed && !state.isSyncing) {
         state.highLatencyStreak++;
         if (state.highLatencyStreak >= 2) {
           performLiveSync('auto_catchup_timeout');
         }
       }
-    } else {
-      // Adaptive speed is disabled by user: direct hard sync trigger
+    } else if (isHardSyncEnabled) {
+      // Adaptive speed is disabled by user, but hard sync is enabled: direct hard sync trigger
       if (state.currentActualRate !== 1.0) {
         setPlaybackRateSmooth(1.0);
       }
@@ -693,6 +793,11 @@
         if (state.highLatencyStreak >= 2 && diff > 0.15) {
           performLiveSync('auto_threshold_exceeded');
         }
+      }
+    } else {
+      // Both adaptive speed and hard sync are disabled: restore normal playback rate
+      if (state.currentActualRate !== 1.0) {
+        setPlaybackRateSmooth(1.0);
       }
     }
   }
@@ -742,6 +847,9 @@
           if (payload.cooldown !== undefined) {
             const c = parseInt(payload.cooldown, 10);
             if (!isNaN(c) && c > 0) state.cooldown = c;
+          }
+          if (typeof payload.hardSync === 'boolean') {
+            state.hardSync = payload.hardSync;
           }
           if (typeof payload.autoCatchupSpeed === 'boolean') {
             state.autoCatchupSpeed = payload.autoCatchupSpeed;

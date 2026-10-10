@@ -5,10 +5,11 @@
 
 const DEFAULT_SETTINGS = {
   enabled: true,
-  maxDelay: 2.0,
+  maxDelay: 3.0,
   reloadThreshold: 5.0,
   cooldown: 10,
-  autoCatchupSpeed: true
+  autoCatchupSpeed: true,
+  hardSync: true
 };
 
 // Initialize default settings on install or update
